@@ -20,13 +20,29 @@ async def handle_user_message(message: Message, state: FSMContext):
     user_data = await state.get_data()
     provider = user_data.get("provider")
     model = user_data.get("model")
+    file_text = user_data.get("file_text")
+
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение")
+        return
 
     # Показываем индикатор печати
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
+        if file_text:
+            # Q&A по загруженному файлу
+            prompt = (
+                "Ответь на вопрос, используя ТОЛЬКО информацию из документа. "
+                "Если ответа нет в документе — честно скажи что данных недостаточно и укажи, каких именно.\n\n"
+                f"=== ДОКУМЕНТ НАЧАЛО ===\n{file_text}\n=== ДОКУМЕНТ КОНЕЦ ===\n\n"
+                f"Вопрос: {message.text}"
+            )
+        else:
+            # Обычный чат
+            prompt = message.text
         # Используем универсальную функцию для получения ответа от любого провайдера
-        response = await get_ai_response(message.text, provider, model)
+        response = await get_ai_response(prompt, provider, model)
         if response and response.strip():
             # Отправляем ответ пользователю
             if len(response) > 4000:

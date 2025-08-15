@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher
 
-from app.handlers import select_ai, messages
+from app.handlers import select_ai, messages, messages_txt
 
 # Подключение к .env
 load_dotenv()
@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 dp = Dispatcher()
 
 dp.include_router(select_ai.router)
+dp.include_router(messages_txt.router)
 dp.include_router(messages.router)
+
 
 async def set_bot_commands(bot: Bot):
     await bot.set_my_commands([
