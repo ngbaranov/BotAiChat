@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: botchatai
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Можно переопределить часовой пояс здесь
+      - TZ=Europe/Moscow
+    # Если хотите видеть логи в stdout (по умолчанию да)
+    # volumes:
+    #   - ./logs:/app/logs
