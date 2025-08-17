@@ -5,10 +5,10 @@ import tempfile
 from aiogram import Router, F
 from aiogram.filters import StateFilter, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, Document
 
 from app.fsm import BotStates
-from app.service.txt_utils import read_text_file
+from app.service.txt_utils import read_text_file, is_text_filename, should_prefer_tail_by_ext
 from app.service.ai_clients import get_ai_response
 
 router = Router()
@@ -16,72 +16,100 @@ router = Router()
 MAX_FILE_SIZE = 2 * 1024 * 1024   # 2 MB
 MAX_CONTEXT   = 100_000           # ограничим контекст
 
-def _is_text_filename(name: str | None) -> bool:
+def _is_text_document(doc: Document) -> bool:
+    # 1) по mime типу
+    if doc.mime_type and doc.mime_type.startswith("text/"):
+        return True
+    # 2) по расширению
+    return is_text_filename(doc.file_name)
+
+def _is_code_ext(name: str | None) -> bool:
     name = (name or "").lower()
-    return name.endswith(".txt") or name.endswith(".md")
+    return name.endswith((
+        ".py",".js",".ts",".tsx",".vue",".java",".kt",".rs",".go",".rb",".php",".pl",".swift",
+        ".c",".cpp",".h",".hpp",".cs",".r",".sql",".sh",".bat",".ps1"
+    ))
 
 @router.message(StateFilter(BotStates.ready), F.document)
 async def handle_text_document(message: Message, state: FSMContext):
     doc = message.document
-    if not _is_text_filename(doc.file_name):
-        # Не мешаем другим обработчикам (pdf/xlsx/и т.п.) — просто выходим
+    if not _is_text_document(doc):
+        # оставляем другим обработчикам (pdf/xlsx и т.п.)
         return
 
     if doc.file_size and doc.file_size > MAX_FILE_SIZE:
-        await message.answer("Файл слишком большой. Пришлите .txt/.md до 2 МБ.")
+        await message.answer("Файл слишком большой. Пришлите текстовый файл до 5 МБ.")
         return
 
-    # Скачиваем во временную папку
     tmpdir = tempfile.mkdtemp(prefix="txt_")
     filename = doc.file_name or f"{doc.file_unique_id}.txt"
     path = os.path.join(tmpdir, filename)
     await message.bot.download(doc, destination=path)
 
-    # Читаем текст
-    text = read_text_file(path, max_chars=MAX_CONTEXT)
+    prefer_tail = should_prefer_tail_by_ext(filename)  # для логов — хвост
+    text = read_text_file(path, max_chars=MAX_CONTEXT, prefer_tail=prefer_tail)
+
     if not text:
         await message.answer("Файл пустой или не удалось прочитать текст.")
         return
 
-    # Кладём в FSM
-    await state.update_data(file_text=text, file_name=filename, file_ext=".txt", file_len=len(text))
+    await state.update_data(
+        file_text=text,
+        file_name=filename,
+        file_ext=os.path.splitext(filename)[1].lower(),
+        file_len=len(text),
+    )
 
+    tip = " (взяли хвост файла)" if prefer_tail else ""
     await message.answer(
-        f"📄 Файл «{filename}» загружен. В контекст добавлено {len(text)} символов.\n\n"
+        f"📄 «{filename}» загружен{tip}. В контекст добавлено {len(text)} символов.\n\n"
         "Дальше:\n"
         "• /summary — краткое резюме\n"
-        "• или просто задайте вопрос по тексту (если ваш общий обработчик это поддерживает)."
+        "• Или задайте вопрос по содержимому файла."
     )
 
 @router.message(StateFilter(BotStates.ready), Command("summary"))
 async def cmd_summary(message: Message, state: FSMContext):
     data = await state.get_data()
     text = data.get("file_text")
+    ext  = (data.get("file_ext") or "").lower()
+    name = data.get("file_name") or "файл"
+
     if not text:
-        await message.answer("Сначала пришлите .txt или .md файл 📎")
+        await message.answer("Сначала пришлите текстовый файл 📎")
         return
 
-    user = await state.get_data()
-    provider = user.get("provider")
-    model = user.get("model")
+    provider = data.get("provider")
+    model    = data.get("model")
 
-    prompt = (
-        "Суммаризируй следующий текст кратко и структурированно (короткие пункты, цифры сохранить):\n\n"
-        f"{text}"
-    )
+    # Чуть разные подсказки для кода/логов/прочего
+    if ext in (".log", ".out", ".err"):
+        system_prompt = (
+            f"Ты помощник по анализу логов. Проанализируй лог {name}: "
+            "суммаризируй ключевые события, ошибки/stack traces, аномалии, последние 10-20 значимых записей, "
+            "возможные причины и что проверить дальше."
+        )
+    elif _is_code_ext(name):
+        system_prompt = (
+            f"Ты помощник по обзору кода. По файлу {name} дай краткое резюме: назначение, ключевые функции/классы, "
+            "основные зависимости, потенциальные проблемы/anti-patterns, TODO/комментарии."
+        )
+    else:
+        system_prompt = "Суммаризируй текст кратко и структурированно, сохраняя факты и числа."
+
+    prompt = f"{system_prompt}\n\n=== ФАЙЛ НАЧАЛО ===\n{text}\n=== ФАЙЛ КОНЕЦ ==="
+
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         resp = await get_ai_response(prompt, provider, model)
-        await message.answer(resp or "Пустой ответ.")
+        await message.answer(resp or "Пусто.")
     except Exception as e:
         await message.answer(f"Ошибка анализа: {e}")
 
 @router.message(StateFilter(BotStates.ready), Command("clear"))
 async def cmd_clear(message: Message, state: FSMContext):
-    # Быстрый сброс загруженного текста
     data = await state.get_data()
     for k in ("file_text", "file_name", "file_ext", "file_len"):
-        if k in data:
-            data.pop(k)
+        data.pop(k, None)
     await state.set_data(data)
-    await message.answer("Контекст файла очищен. Можно загружать новый .txt/.md.")
+    await message.answer("Контекст файла очищен.")
