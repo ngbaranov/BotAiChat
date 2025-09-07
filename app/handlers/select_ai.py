@@ -106,3 +106,31 @@ async def cmd_model(message: Message, state: FSMContext):
 async def cmd_provider(message: Message, state: FSMContext):
     await message.answer("Выберите AI провайдера:", reply_markup=select_provider_ai_keyboard())
     await state.set_state(BotStates.choosing_provider)
+
+
+from aiogram.filters import Command
+from aiogram.types import Message
+from app.service.dist_model import OPENAI_MODELS
+
+# ...
+
+@router.message(Command("info"))
+async def cmd_info(message: Message, state: FSMContext):
+    """Показывает текущего провайдера и модель из FSM"""
+    data = await state.get_data()
+    provider = data.get("provider")
+    model_key = data.get("model")
+
+    if not provider or not model_key:
+        await message.answer("ℹ️ Настройки ещё не выбраны.\nНажмите /start и завершите выбор провайдера и модели.")
+        return
+
+    # Красивые названия
+    provider_name = {"openai": "OpenAI", "deepseek": "DeepSeek"}.get(provider, provider)
+    model_name = OPENAI_MODELS.get(model_key, model_key)  # на случай, если хранится ключ вида "gpt-5"
+
+    await message.answer(
+        f"ℹ️ Текущие настройки:\n"
+        f"🤖 Провайдер: {provider_name}\n"
+        f"🎯 Модель: {model_name}"
+    )

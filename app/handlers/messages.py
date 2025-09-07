@@ -15,7 +15,8 @@ DEEPSEEK_API_KEY = getenv("DEEPSEEK_API_KEY")
 
 @router.message(StateFilter(BotStates.ready))
 async def handle_user_message(message: Message, state: FSMContext):
-    """Обработка сообщений пользователя в состоянии готовности"""
+    """Обработка сообщений пользователя в состоянии готовности
+    (после выбора провайдера и модели)"""
 
     user_data = await state.get_data()
     provider = user_data.get("provider")

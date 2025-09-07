@@ -24,6 +24,7 @@ def _is_text_document(doc: Document) -> bool:
     return is_text_filename(doc.file_name)
 
 def _is_code_ext(name: str | None) -> bool:
+    """Простая эвристика по названию файла, чтобы понять, что это код."""
     name = (name or "").lower()
     return name.endswith((
         ".py",".js",".ts",".tsx",".vue",".java",".kt",".rs",".go",".rb",".php",".pl",".swift",
@@ -32,6 +33,11 @@ def _is_code_ext(name: str | None) -> bool:
 
 @router.message(StateFilter(BotStates.ready), F.document)
 async def handle_text_document(message: Message, state: FSMContext):
+    """Обработка текстовых документов, загружаемых пользователем.
+    Поддерживаются файлы до 5 МБ с текстовым содержимым.
+    После загрузки файл читается и его текст сохраняется в состояние.
+    Пользователь может затем задавать вопросы по содержимому файла.
+    """
     doc = message.document
     if not _is_text_document(doc):
         # оставляем другим обработчикам (pdf/xlsx и т.п.)
@@ -67,6 +73,9 @@ async def handle_text_document(message: Message, state: FSMContext):
         "• /summary — краткое резюме\n"
         "• Или задайте вопрос по содержимому файла."
     )
+
+    await state.set_state(BotStates.ready)
+    await message.answer("После работы с файлом чтобы продолжить чат введи команду /clear или выбери её из меню")
 
 @router.message(StateFilter(BotStates.ready), Command("summary"))
 async def cmd_summary(message: Message, state: FSMContext):
@@ -106,8 +115,14 @@ async def cmd_summary(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"Ошибка анализа: {e}")
 
+    await state.set_state(BotStates.ready)
+    await message.answer("Можете задать новые вопросы по файлу или просто продолжить диалог с AI.")
+
+
 @router.message(StateFilter(BotStates.ready), Command("clear"))
 async def cmd_clear(message: Message, state: FSMContext):
+    """Очистка контекста файла из состояния.
+    """
     data = await state.get_data()
     for k in ("file_text", "file_name", "file_ext", "file_len"):
         data.pop(k, None)
